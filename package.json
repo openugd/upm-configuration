@@ -1,0 +1,31 @@
+{
+  "name": "com.openugd.configuration",
+  "displayName": "Configuration",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "unity": "6000.0",
+  "unityRelease": "0f1",
+  "author": {
+    "name": "Mykola Dorofii",
+    "email": "dorofiy.kolya@gmail.com",
+    "url": "https://github.com/openugd"
+  },
+  "description": "Unreleased 0.x, outside the OpenUGD 2.0 release. String-keyed, layered configuration for com.openugd.context: a case-insensitive string-to-string map filled from JSON, dictionaries or settings objects, with explicit overrides on top, typed binding onto plain settings objects, and one opt-in registration, ContextBuilder.AddConfiguration, that makes it resolvable as IConfiguration. Has known open defects; read the README before use.",
+  "keywords": [
+    "configuration",
+    "settings",
+    "json",
+    "context"
+  ],
+  "dependencies": {
+    "com.openugd.context": "2.0.0",
+    "com.openugd.lifetime": "2.0.0"
+  },
+  "licensesUrl": "https://github.com/openugd/upm-configuration/blob/main/LICENSE.md",
+  "documentationUrl": "https://github.com/openugd/upm-configuration",
+  "changelogUrl": "https://github.com/openugd/upm-configuration/blob/main/CHANGELOG.md",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/openugd/upm-configuration.git"
+  }
+}
