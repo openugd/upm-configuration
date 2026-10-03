@@ -2,10 +2,9 @@
 
 String-keyed, layered configuration for [`com.openugd.context`](https://github.com/openugd/upm-context).
 
-> **Unreleased 0.x, outside the OpenUGD 2.0 release.** This package is not published on OpenUPM, and
-> its repository, `github.com/openugd/upm-configuration`, has not been created yet. It has known open
-> defects, listed [below](#known-open-defects), and it will stay unpublished until they are fixed and it
-> has its own samples. Until then its API may change in any way.
+> **Unreleased 0.x, outside the OpenUGD 2.0 release.** This package is not published on OpenUPM yet. It
+> has known open defects, listed [below](#known-open-defects), and it will stay unpublished until they are
+> fixed and it has its own samples. Until then its API may change in any way.
 
 The code used to live inside `com.openugd.context`. It was moved out before context 2.0.0 so that the
 container carries no configuration system: in context, a setting is a `ScriptableObject` (or any object)
@@ -16,18 +15,27 @@ plain settings classes.
 
 ## Install
 
-Not on OpenUPM. To try it, clone the repository next to your project and reference it as a local
-package in `Packages/manifest.json`:
+Not on OpenUPM. To try it, install it from git. It depends on `com.openugd.context` 2.0.0 and
+`com.openugd.lifetime` 2.0.0, which are on OpenUPM, so add the OpenUPM registry for the `com.openugd`
+scope as well. In `Packages/manifest.json`:
 
 ```json
 {
+  "scopedRegistries": [
+    {
+      "name": "package.openupm.com",
+      "url": "https://package.openupm.com",
+      "scopes": ["com.openugd"]
+    }
+  ],
   "dependencies": {
-    "com.openugd.configuration": "file:../../upm-configuration"
+    "com.openugd.configuration": "https://github.com/openugd/upm-configuration.git"
   }
 }
 ```
 
-It depends on `com.openugd.context` 2.0.0 and `com.openugd.lifetime` 2.0.0.
+There are no tags yet, so the git URL follows `main`. A local clone works the same way:
+`"com.openugd.configuration": "file:../../upm-configuration"` (the path is relative to `Packages/`).
 
 ## Usage
 
