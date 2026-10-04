@@ -1,10 +1,11 @@
 # Configuration
 
+[![Tests](https://github.com/openugd/upm-tools/actions/workflows/ci.yml/badge.svg)](https://github.com/openugd/upm-tools/actions/workflows/ci.yml)
+
 String-keyed, layered configuration for [`com.openugd.context`](https://github.com/openugd/upm-context).
 
-> **Unreleased 0.x, outside the OpenUGD 2.0 release.** This package is not published on OpenUPM yet: the
-> defects the September 2026 audit found in it are fixed, and it stays unpublished until it has its own
-> samples. Until then its API may change in any way.
+> **Unreleased 0.x, outside the OpenUGD 2.0 release.** This package is not published on OpenUPM yet, and
+> stays unpublished until it has its own samples. Until then its API may change in any way.
 
 The code used to live inside `com.openugd.context`. It was moved out before context 2.0.0 so that the
 container carries no configuration system: in context, a setting is a `ScriptableObject` (or any object)
@@ -36,6 +37,15 @@ scope as well. In `Packages/manifest.json`:
 
 There are no tags yet, so the git URL follows `main`. A local clone works the same way:
 `"com.openugd.configuration": "file:../../upm-configuration"` (the path is relative to `Packages/`).
+
+## Requirements
+
+- Unity 6000.0 or newer. Tested with 6000.0.41f1.
+- [`com.openugd.context`](https://github.com/openugd/upm-context) 2.0.0 and
+  [`com.openugd.lifetime`](https://github.com/openugd/upm-lifetime) 2.0.0, from OpenUPM through the scoped
+  registry shown above.
+- Nothing else. The runtime assembly is compiled with `noEngineReferences`; only the tests reference
+  `UnityEngine`, and only the tests need the Unity Test Framework.
 
 ## Usage
 
@@ -126,6 +136,8 @@ It touches the container in one place, the `AddConfiguration` extension method o
 
 ## API
 
+All types are in the `OpenUGD` namespace.
+
 | Type | What it is |
 | --- | --- |
 | `IConfiguration` | The read side: an indexer and an enumerator over the effective pairs. |
@@ -160,8 +172,64 @@ It touches the container in one place, the `AddConfiguration` extension method o
   managed linker strips members that nothing else calls. A property whose setter was stripped no longer
   counts as writable, so `Bind` skips it silently and the value stays at its default; a stripped
   constructor makes `Bind` throw. The binder has not been run through UnityLinker since it was moved out.
-  Preserve your settings types in a `link.xml` under your project's `Assets` folder, for example
-  `<type fullname="MyGame.ServerOptions" preserve="all"/>`.
+  Preserve your settings types in a `link.xml` under your project's `Assets` folder. Its `<assembly>`
+  element names the assembly that declares them: the name of their assembly definition, or
+  `Assembly-CSharp` for scripts outside one. List every settings type the binder reaches, not only the
+  root: a nested settings class or struct, and one used as the element type of a list or array, needs its
+  own entry. A type's `fullname` includes its namespace (`MyGame.ServerOptions` for a type declared in
+  `namespace MyGame`). For the Usage example's types, which are declared in no namespace:
+
+  ```xml
+  <linker>
+    <assembly fullname="Assembly-CSharp">
+      <type fullname="ServerOptions" preserve="all"/>
+      <type fullname="Backoff" preserve="all"/>
+    </assembly>
+  </linker>
+  ```
+
+## Running the tests
+
+The package's tests are an EditMode assembly, `com.openugd.configuration.tests`. List the package under
+`testables` in `Packages/manifest.json`, next to the scoped registry from [Install](#install); your project
+needs `com.unity.test-framework`, which new projects already have:
+
+```json
+{
+  "dependencies": {
+    "com.openugd.configuration": "https://github.com/openugd/upm-configuration.git"
+  },
+  "testables": [
+    "com.openugd.configuration"
+  ]
+}
+```
+
+Then open *Window > General > Test Runner* and run the EditMode tests. The 5 tests in the category
+`RequiresUnity` (`UnityObjectTests`) need the editor; the rest are plain .NET and use no engine API.
+
+The checks also run in public CI: [openugd/upm-tools](https://github.com/openugd/upm-tools/actions/workflows/ci.yml)
+compiles this package and the complete examples in this README (those that declare a type) against Unity
+6000.0's assemblies and runs its engine-free tests on every change there and every Monday. It does not run
+the `RequiresUnity` tests; run those in the editor.
+
+## Versioning
+
+The package follows [Semantic Versioning](https://semver.org/spec/v2.0.0.html). While its major version is
+0, any version may change the API. The changes in each version are listed in [CHANGELOG.md](CHANGELOG.md).
+
+## Contributing
+
+Report a bug or an idea at
+[github.com/openugd/upm-configuration/issues](https://github.com/openugd/upm-configuration/issues): include
+the Unity version, the package version (for a git install, the commit) and, for an exception, the full
+message. To work on the package, clone it, reference the clone from a Unity 6 project
+(`"com.openugd.configuration": "file:../path/to/upm-configuration"` in `Packages/manifest.json`), add
+`com.openugd.configuration` to `testables`, and run its tests in the Test Runner. The project also needs
+`com.openugd.context` and `com.openugd.lifetime`: keep the scoped registry from [Install](#install), or
+reference clones of [upm-context](https://github.com/openugd/upm-context) and
+[upm-lifetime](https://github.com/openugd/upm-lifetime) the same way. The checks CI runs are scripts in
+[openugd/upm-tools](https://github.com/openugd/upm-tools); its README shows how to run them locally.
 
 ## Licence
 

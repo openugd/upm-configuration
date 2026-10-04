@@ -4,8 +4,9 @@ using UnityEngine;
 namespace OpenUGD.Tests
 {
     /// <summary>
-    /// CX-27 with a real <see cref="ScriptableObject"/>: AddObject and Bind see its own public members, not the
-    /// engine's (<c>name</c>, <c>hideFlags</c>), and Get never creates a <see cref="Object"/> by reflection.
+    /// Unity's own members, with a real <see cref="ScriptableObject"/>: AddObject and Bind see its own public
+    /// members, not the engine's (<c>name</c>, <c>hideFlags</c>), and Get never creates a <see cref="Object"/>
+    /// by reflection.
     /// </summary>
     [TestFixture]
     [Category("RequiresUnity")]

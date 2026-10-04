@@ -338,7 +338,7 @@ namespace OpenUGD.Tests
             StringAssert.Contains(typeof(IConfiguration).FullName, error.Message);
         }
 
-        // ===== CX-25: read-only once built =====
+        // ===== read-only once built =====
 
         [Test]
         public void TheManagerIsReadOnlyOnceItsContextIsBuilt()
@@ -424,7 +424,7 @@ namespace OpenUGD.Tests
             Assert.AreEqual("2", manager["b"]);
         }
 
-        // ===== CX-26: a child reads through to its parent =====
+        // ===== a child reads through to its parent =====
 
         [Test]
         public void AChildTracksALiveParentConfigurationAndLayersItsOwnValuesOnTop()

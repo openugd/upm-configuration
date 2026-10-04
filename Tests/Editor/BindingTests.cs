@@ -7,8 +7,8 @@ namespace OpenUGD.Tests
 {
     /// <summary>
     /// <see cref="ConfigurationExtensions.Get{T}"/> and <see cref="ConfigurationExtensions.Bind"/> beyond flat
-    /// classes: scalars (CX-17), structs (CX-18), collections and the AddObject round trip (CX-19), and the
-    /// members of Unity's own types (CX-27).
+    /// classes: scalars, structs, collections and the AddObject round trip, and the members of Unity's own
+    /// types.
     /// </summary>
     [TestFixture]
     public class BindingTests
@@ -20,7 +20,7 @@ namespace OpenUGD.Tests
             return manager;
         }
 
-        // ===== CX-17: Get<T> of a scalar =====
+        // ===== Get<T> of a scalar =====
 
         [Test]
         public void GetReadsAScalarFromItsKey()
@@ -73,7 +73,7 @@ namespace OpenUGD.Tests
             StringAssert.Contains("parameterless constructor", error.Message);
         }
 
-        // ===== CX-18: structs =====
+        // ===== structs =====
 
         [Test]
         public void BindFillsAStructMemberFromNestedKeys()
@@ -128,7 +128,7 @@ namespace OpenUGD.Tests
             Assert.AreEqual(9, held.Count, "The held instance itself is not changed.");
         }
 
-        // ===== CX-19: collections =====
+        // ===== collections =====
 
         [Test]
         public void JsonArraysBindIntoListsArraysAndReadOnlyLists()
@@ -366,7 +366,7 @@ namespace OpenUGD.Tests
             Assert.AreEqual(original.Offset.Offset, copy.Offset.Offset);
         }
 
-        // ===== CX-27: members Unity's own types declare =====
+        // ===== members Unity's own types declare =====
 
         [Test]
         public void MembersDeclaredByUnityTypesAreNeitherWalkedNorBound()

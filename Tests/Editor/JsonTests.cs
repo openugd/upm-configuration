@@ -3,7 +3,7 @@ using NUnit.Framework;
 namespace OpenUGD.Tests
 {
     /// <summary>
-    /// <see cref="ConfigurationManagerExtensions.AddJson"/> as a strict RFC 8259 reader (CX-24): every
+    /// <see cref="ConfigurationManagerExtensions.AddJson"/> as a strict RFC 8259 reader: every
     /// malformation is a <see cref="ConfigurationException"/>, numbers follow JSON's grammar, a byte-order mark is
     /// accepted.
     /// </summary>
