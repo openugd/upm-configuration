@@ -2,9 +2,9 @@
 
 String-keyed, layered configuration for [`com.openugd.context`](https://github.com/openugd/upm-context).
 
-> **Unreleased 0.x, outside the OpenUGD 2.0 release.** This package is not published on OpenUPM yet. It
-> has known open defects, listed [below](#known-open-defects), and it will stay unpublished until they are
-> fixed and it has its own samples. Until then its API may change in any way.
+> **Unreleased 0.x, outside the OpenUGD 2.0 release.** This package is not published on OpenUPM yet: the
+> defects the September 2026 audit found in it are fixed, and it stays unpublished until it has its own
+> samples. Until then its API may change in any way.
 
 The code used to live inside `com.openugd.context`. It was moved out before context 2.0.0 so that the
 container carries no configuration system: in context, a setting is a `ScriptableObject` (or any object)
@@ -39,22 +39,40 @@ There are no tags yet, so the git URL follows `main`. A local clone works the sa
 
 ## Usage
 
-A settings class is plain data: a public parameterless constructor and public read/write members.
+A settings class is plain data: a public parameterless constructor and public read/write members. Members
+can be scalars, nested settings classes, structs (Unity's `Vector3` and `Color` included), and lists or
+arrays of any of these. A nested settings object is bound into a shallow copy of the one the member holds,
+so a static default or an instance two members share keeps its own values.
 
 ```csharp
+using System.Collections.Generic;
 using OpenUGD;
+
+public struct Backoff
+{
+    public int FirstSeconds;
+    public int MaxSeconds;
+}
 
 public sealed class ServerOptions
 {
     public string Url { get; set; } = "https://localhost";
     public int TimeoutSeconds { get; set; } = 10;
+    public Backoff Retry;                     // Server:Retry:FirstSeconds, Server:Retry:MaxSeconds
+    public List<string> Mirrors { get; set; } // Server:Mirrors:0, Server:Mirrors:1, ...
+        = new List<string>();
 }
 
 public sealed class Api
 {
-    public Api(IConfiguration configuration) => Options = configuration.Get<ServerOptions>("Server");
+    public Api(IConfiguration configuration)
+    {
+        Options = configuration.Get<ServerOptions>("Server");
+        Slot = configuration.Get<int>("Save:Slot");   // one value: 0 when the key is absent
+    }
 
     public ServerOptions Options { get; }
+    public int Slot { get; }
 }
 ```
 
@@ -78,18 +96,31 @@ var context = await builder.BuildAsync();
 ```
 
 Keys are `:`-separated paths compared case-insensitively, so `{"Server":{"Url":"…"}}` and
-`Server:Url` are the same key. An absent key reads as `null`.
+`Server:Url` are the same key. An absent key reads as `null`. A JSON array, or a list passed to
+`AddObject`, becomes indexed keys (`Server:Mirrors:0`, `Server:Mirrors:1`), and `Bind` reads them back into
+an array or list member. A configured list replaces the member's default list rather than adding to it.
+
+`AddJson` is a strict JSON reader (RFC 8259): no comments or trailing commas, and numbers only in JSON's
+own grammar. Every malformation is a `ConfigurationException` that gives the character offset.
 
 ## How it fits the container
 
 It touches the container in one place, the `AddConfiguration` extension method on `ContextBuilder`.
 
-- **Opt-in.** A context whose builder never calls it has no `IConfiguration`. A service that takes one
-  then fails `BuildAsync` validation like any other missing dependency.
-- **Child contexts.** A child builder that calls `AddConfiguration` starts with a copy of the pairs its
-  parent's `IConfiguration` enumerates, in the provider layer, so its own overrides win and the parent is
-  not changed. The copy is taken once, when it is called. A child that does not call it resolves the
-  parent's `IConfiguration` itself, like any inherited service.
+- **Opt-in.** Nothing registers an `IConfiguration` automatically: a context has one only if its builder,
+  or an ancestor's, calls `AddConfiguration` or registers its own. Without one, a service that takes an
+  `IConfiguration` fails `BuildAsync` validation like any other missing dependency.
+- **Read-only once built.** The manager it returns is writable until `BuildAsync` constructs the
+  `IConfiguration` registration, which happens before any service obtains it and before the boot phases.
+  After that a write throws `InvalidOperationException`, even through an `IConfiguration` cast back to
+  `ConfigurationManager`, so a service keeps reading the values it read in its constructor (in a child, a
+  live parent's changes still show through). Hand the manager to services only as `IConfiguration`. For
+  values that change at run time, register your own `IConfiguration`.
+- **Child contexts.** A child builder that calls `AddConfiguration` gets a manager that reads through to
+  its parent's `IConfiguration` for every key it does not hold, at lookup time. Its own values win, a key it
+  sets to `null` hides the parent's, and the parent is not changed. Nothing is copied, so a parent whose
+  `IConfiguration` is live is tracked. A child that does not call it resolves the parent's
+  `IConfiguration` itself, like any inherited service.
 - **Once per builder.** A second call registers a second `IConfiguration`, and the build rejects the
   duplicate, naming both call sites.
 
@@ -100,44 +131,37 @@ It touches the container in one place, the `AddConfiguration` extension method o
 | `IConfiguration` | The read side: an indexer and an enumerator over the effective pairs. |
 | `ConfigurationManager` | The writable map. Providers underneath, indexer overrides on top. |
 | `ConfigurationManagerExtensions` | Providers: `AddJson`, `AddObject`, `AddDictionary`. |
-| `ConfigurationExtensions` | Reading: `TryGet`, `GetSection`, `Get<T>`, `Bind`. |
+| `ConfigurationExtensions` | Reading: `TryGet`, `GetSection`, `Get<T>` (a scalar, a collection or a settings object), `Bind`. |
 | `ContextBuilderConfigurationExtensions` | `AddConfiguration`, the container integration. |
-| `ConfigurationException` | Malformed JSON, a value that cannot be converted, a settings type that cannot be created. |
+| `ConfigurationException` | Malformed JSON, a value that cannot be converted, a settings type that cannot be created (including a `UnityEngine.Object`). |
 
-## Known open defects
+## Limitations
 
-These are why the package is unreleased. The IDs refer to the OpenUGD audit of September 2026.
-
-- **CX-17: `Get<T>` throws for a type without a public parameterless constructor**, which includes every
-  scalar. `configuration.Get<int>("Save:Slot")` and `Get<string>(…)` throw a `ConfigurationException`.
-  Read a scalar through the indexer and parse it yourself.
-- **CX-18: `Bind` does not recurse into structs.** It recurses only into class members, so a member of
-  struct type is not filled from nested keys such as `Size:X` and `Size:Y`.
-- **CX-19: collections do not round-trip.** `AddObject` writes a list or array as `Servers:0`,
-  `Servers:1`, …, but `Bind` never fills a collection member from those keys.
-- **CX-24: JSON parser edge cases.** A `\u` escape whose four characters are not hexadecimal throws a
-  `FormatException` instead of a `ConfigurationException`. A number only has to parse as a `double`, so
-  `NaN` and `Infinity` are accepted. A document that starts with a byte-order mark is rejected as
-  malformed.
-- **CX-25: configuration stays writable after the build.** The manager registered as `IConfiguration` is
-  the one `AddConfiguration` returned. Writes after `BuildAsync` reach every service that holds it, and a
-  service can cast its `IConfiguration` back to `ConfigurationManager` and write to it.
-- **CX-26: a child's configuration does not track its parent's.** Inside context, a child's automatic
-  `IConfiguration` shadowed a custom one registered in its parent. Now a child that does not call
-  `AddConfiguration` resolves whatever its parent registered, but a child that does call it replaces the
-  parent's `IConfiguration` with a one-time copy of the pairs the parent enumerated. A custom live
-  implementation is copied, not chained, and later writes to the parent never reach the child.
-- **CX-27: `AddObject` on a `UnityEngine.Object` flattens engine properties too.** A `ScriptableObject`
-  contributes `name` and `hideFlags` along with its own fields, because both are public read/write
-  properties.
-
-**IL2CPP and managed-code stripping.** `Bind` writes, and `AddObject` reads, public fields and properties
-by reflection only, and creates nested settings objects through their parameterless constructor. The
-managed linker strips members that nothing else calls. A property whose setter was stripped no longer
-counts as writable, so `Bind` skips it silently and the value stays at its default; a stripped
-constructor makes `Bind` throw. The binder has not been run through UnityLinker since it was moved out.
-Until `Bind` fails loudly on a stripped setter, preserve your settings types in a `link.xml` under your
-project's `Assets` folder, for example `<type fullname="MyGame.ServerOptions" preserve="all"/>`.
+- **What binds.** Public read/write fields and properties. Get-only members, private members and members
+  declared by classes in the `UnityEngine` namespace or below (`name`, `hideFlags`, `enabled`, …) are not
+  bound and not written by `AddObject`. Unity's value types (`Vector3`, `Color`, `Rect`) bind like any
+  struct, and classes Unity ships in other namespaces (`TMPro`, `Unity.*`) like any class. A dictionary
+  member is not bound; read a map with `GetSection` and enumerate it.
+- **Copies are shallow.** A nested settings object is bound into a `MemberwiseClone` of the one the member
+  holds. What that object references is shared, so state a property writes through to an inner object can
+  still change. An object that owns a resource (a `UnityEngine.Object`, another Unity class such as
+  `AnimationCurve`, or any class with a finalizer) is bound in place, never copied.
+- **Overlapping members.** Some types expose the same state through several settable members, for example
+  `Rect`, `RectInt`, `Bounds` and `BoundsInt` (`x`, `position`, `min`, `center`, …), `Quaternion`
+  (`eulerAngles` writes `x`…`w`) and `Resolution` (the obsolete `refreshRate` overwrites `refreshRateRatio`
+  with whole hertz). `AddObject` writes all of them, and `Bind` applies them one after another (fields
+  before properties), so the last one applied wins. Configure such a member through one set of keys, and do
+  not use `AddObject` for its defaults.
+- **Unity objects.** `Get<T>` never creates a `UnityEngine.Object`. Create a `ScriptableObject` or a
+  component the Unity way and call `Bind` on it. Only its public members are bound, not its private
+  `[SerializeField]` fields.
+- **IL2CPP and managed-code stripping.** `Bind` writes, and `AddObject` reads, public fields and properties
+  by reflection only, and creates nested settings objects through their parameterless constructor. The
+  managed linker strips members that nothing else calls. A property whose setter was stripped no longer
+  counts as writable, so `Bind` skips it silently and the value stays at its default; a stripped
+  constructor makes `Bind` throw. The binder has not been run through UnityLinker since it was moved out.
+  Preserve your settings types in a `link.xml` under your project's `Assets` folder, for example
+  `<type fullname="MyGame.ServerOptions" preserve="all"/>`.
 
 ## Licence
 

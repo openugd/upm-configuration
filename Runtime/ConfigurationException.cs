@@ -4,8 +4,8 @@ namespace OpenUGD
 {
     /// <summary>
     /// Configuration could not be read: a JSON document that is malformed, a value that cannot be converted
-    /// to the member it binds to, a settings type that cannot be created, or an object graph too deep to
-    /// flatten.
+    /// to the member it binds to, a settings type that cannot be created (no public parameterless
+    /// constructor, abstract, or a <c>UnityEngine.Object</c>), or an object graph too deep to flatten.
     /// </summary>
     /// <remarks>
     /// <para>
@@ -15,9 +15,9 @@ namespace OpenUGD
     /// </para>
     /// <para>
     /// <b>It is not the only exception this package throws.</b> A bad argument is still an
-    /// <see cref="ArgumentNullException"/> or <see cref="ArgumentException"/>, and one malformation in
-    /// <see cref="ConfigurationManagerExtensions.AddJson"/> — a <c>\u</c> escape whose four characters are
-    /// not hexadecimal — escapes as the <see cref="FormatException"/> the underlying parse threw.
+    /// <see cref="ArgumentNullException"/> or <see cref="ArgumentException"/>, and a write to a
+    /// <see cref="ConfigurationManager"/> whose context has been built is an
+    /// <see cref="InvalidOperationException"/>: that is a misuse of the API, not unreadable configuration.
     /// </para>
     /// </remarks>
     public sealed class ConfigurationException : Exception

@@ -50,11 +50,15 @@ namespace OpenUGD
         /// <paramref name="configuration"/> or <paramref name="values"/> is <c>null</c>.
         /// </exception>
         /// <exception cref="ArgumentException">A pair has a <c>null</c> key.</exception>
+        /// <exception cref="InvalidOperationException">
+        /// The manager is read-only because its context has been built.
+        /// </exception>
         public static ConfigurationManager AddDictionary(this ConfigurationManager configuration,
             IEnumerable<KeyValuePair<string, string>> values, string prefix = null)
         {
             if (configuration == null) throw new ArgumentNullException(nameof(configuration));
             if (values == null) throw new ArgumentNullException(nameof(values));
+            configuration.ThrowIfFrozen();
 
             foreach (var pair in values)
             {
@@ -72,7 +76,8 @@ namespace OpenUGD
         /// <remarks>
         /// <para>
         /// <c>{"Save":{"Slot":3,"Tags":["a","b"]}}</c> becomes <c>Save:Slot</c> = <c>3</c>,
-        /// <c>Save:Tags:0</c> = <c>a</c>, <c>Save:Tags:1</c> = <c>b</c>. Scalars are stored as their source
+        /// <c>Save:Tags:0</c> = <c>a</c>, <c>Save:Tags:1</c> = <c>b</c>. An empty property name is a segment
+        /// like any other: <c>{"":1}</c> is the key <c>""</c>. Scalars are stored as their source
         /// text — a number keeps its exact spelling, unrounded and unnormalised — and are interpreted only
         /// when something binds them. Strings are unescaped. An empty object or array contributes no key
         /// at all, not even an empty one.
@@ -82,12 +87,13 @@ namespace OpenUGD
         /// string: the same single rule for "not configured", with no third state.
         /// </para>
         /// <para>
-        /// <b>A small hand-written parser</b>, so that the package takes no dependency on a JSON library:
-        /// no comments, no trailing commas, no unquoted or single-quoted property names. It rejects any
-        /// content after the top-level value, and refuses a document nested deeper than 32 levels. Numbers
-        /// are the one loose spot — the literal only has to parse as a <c>double</c>, so <c>+1</c> and
-        /// <c>01</c> get through where a strict reader would refuse them — which costs nothing, because
-        /// the text is stored as written and interpreted only when something binds it.
+        /// <b>A small hand-written parser</b>, so that the package takes no dependency on a JSON library,
+        /// and a strict one (RFC 8259): no comments, no trailing commas, no unquoted or single-quoted property
+        /// names, numbers only in JSON's own grammar (so <c>+1</c>, <c>01</c>, <c>.5</c>, <c>NaN</c> and
+        /// <c>Infinity</c> are malformed), no raw control characters inside a string, and only space, tab,
+        /// line feed and carriage return as whitespace. It rejects any content after the top-level value, and
+        /// refuses a document nested deeper than 32 levels. A leading byte-order mark (U+FEFF), which a text
+        /// read without decoding it — a <c>TextAsset</c>'s text, say — can still carry, is skipped.
         /// </para>
         /// <para>
         /// A scalar at the root has no name of its own, so it needs <paramref name="prefix"/> to give it
@@ -109,19 +115,20 @@ namespace OpenUGD
         /// bare scalar with no <paramref name="prefix"/> to name it. The message carries the character
         /// offset and what was expected there. Keys parsed before the failure are already written.
         /// </exception>
-        /// <exception cref="FormatException">
-        /// The four characters of a <c>\u</c> escape are not hexadecimal. Every other malformation is
-        /// reported as a <see cref="ConfigurationException"/>; this one case escapes from the underlying
-        /// parse.
+        /// <exception cref="InvalidOperationException">
+        /// The manager is read-only because its context has been built.
         /// </exception>
         public static ConfigurationManager AddJson(this ConfigurationManager configuration, string json,
             string prefix = null)
         {
             if (configuration == null) throw new ArgumentNullException(nameof(configuration));
             if (json == null) throw new ArgumentNullException(nameof(json));
+            configuration.ThrowIfFrozen();
 
-            var index = 0;
-            ReadValue(configuration, json, ref index, prefix ?? string.Empty, 0);
+            var index = json.Length != 0 && json[0] == '\uFEFF' ? 1 : 0;
+            // The JSON walk marks "no path yet" with null, so that an empty property name ("") is a key like
+            // any other rather than the root.
+            ReadValue(configuration, json, ref index, string.IsNullOrEmpty(prefix) ? null : prefix, 0);
             SkipWhitespace(json, ref index);
             if (index != json.Length) throw Malformed(index, "unexpected trailing content");
 
@@ -139,15 +146,29 @@ namespace OpenUGD
         /// public instance fields that are neither <c>readonly</c> nor <c>const</c>, and public instance
         /// properties with a public getter, a public setter and no index parameters. A get-only property
         /// is not written out, so a computed value cannot leak into configuration and come back as data.
+        /// Members declared by classes in the <c>UnityEngine</c> namespace or below it are not walked either,
+        /// so a <c>ScriptableObject</c> contributes its own public fields and properties but not <c>name</c>
+        /// or <c>hideFlags</c>; Unity's value types (<c>Vector3</c>, <c>Color</c>) are walked like any struct,
+        /// and classes Unity ships in other namespaces (<c>TMPro</c>) like any class.
         /// </para>
         /// <para>
-        /// <b>Shape.</b> Members nest as <c>Path:Member</c>; anything <see cref="IEnumerable"/> — an array,
-        /// a list — nests as <c>Path:0</c>, <c>Path:1</c>. Scalars (primitives, enums, <c>string</c>,
-        /// <c>decimal</c>, <see cref="Guid"/>, <see cref="TimeSpan"/>, <see cref="DateTime"/>,
-        /// <see cref="DateTimeOffset"/>, <see cref="Uri"/>) are formatted under
+        /// <b>Shape.</b> Members nest as <c>Path:Member</c>, a struct's as well as a class's; anything
+        /// <see cref="IEnumerable"/> — an array, a list — nests as <c>Path:0</c>, <c>Path:1</c>, which
+        /// <see cref="ConfigurationExtensions.Bind"/> reads back into an array or list member. Scalars
+        /// (primitives, enums, <c>string</c>, <c>decimal</c>, <see cref="Guid"/>, <see cref="TimeSpan"/>,
+        /// <see cref="DateTime"/>, <see cref="DateTimeOffset"/>, <see cref="Uri"/>) are formatted under
         /// <see cref="CultureInfo.InvariantCulture"/>, and a <c>bool</c> as <c>true</c>/<c>false</c> rather
-        /// than .NET's <c>True</c>/<c>False</c>, so that what is written back round-trips through
-        /// <see cref="ConfigurationExtensions.Bind"/>.
+        /// than .NET's <c>True</c>/<c>False</c>, a <see cref="DateTime"/> or <see cref="DateTimeOffset"/> in the
+        /// round-trip pattern <c>"O"</c>, and a <c>float</c> or <c>double</c> with every digit it needs, so that
+        /// what is written back round-trips through <see cref="ConfigurationExtensions.Bind"/>, a negative zero
+        /// included. A type whose settable members overlap is written out through every one of them, and they
+        /// are bound back one after another — public fields before properties, a class's own members before
+        /// the ones it inherits — so the last one applied wins: for example Unity's <c>Rect</c>,
+        /// <c>RectInt</c>, <c>Bounds</c> and <c>BoundsInt</c>, whose <c>x</c>, <c>position</c>, <c>min</c> and
+        /// <c>center</c> write the same state, <c>Quaternion</c>, whose <c>eulerAngles</c> writes its
+        /// <c>x</c>…<c>w</c>, and <c>Resolution</c>, whose obsolete <c>refreshRate</c> overwrites
+        /// <c>refreshRateRatio</c> with a whole number of hertz. Configure such a member through one set of keys,
+        /// and do not use <c>AddObject</c> for its defaults.
         /// </para>
         /// <para>
         /// <b>A null member writes nothing.</b> It contributes no key, so it neither creates an entry nor
@@ -185,11 +206,15 @@ namespace OpenUGD
         /// The graph nests more than 32 levels deep, which in practice means it contains a cycle. The
         /// message names the path reached.
         /// </exception>
+        /// <exception cref="InvalidOperationException">
+        /// The manager is read-only because its context has been built.
+        /// </exception>
         public static ConfigurationManager AddObject(this ConfigurationManager configuration, object value,
             string prefix = null)
         {
             if (configuration == null) throw new ArgumentNullException(nameof(configuration));
             if (value == null) throw new ArgumentNullException(nameof(value));
+            configuration.ThrowIfFrozen();
 
             Flatten(configuration, value, prefix ?? string.Empty, 0);
             return configuration;
@@ -203,7 +228,7 @@ namespace OpenUGD
 
             var type = value.GetType();
 
-            if (IsScalar(type))
+            if (Shapes.IsScalar(type))
             {
                 if (path.Length == 0)
                 {
@@ -244,14 +269,16 @@ namespace OpenUGD
             }
         }
 
-        private static bool IsScalar(Type type) =>
-            type.IsPrimitive || type.IsEnum || type == typeof(string) || type == typeof(decimal) ||
-            type == typeof(Guid) || type == typeof(TimeSpan) || type == typeof(DateTime) ||
-            type == typeof(DateTimeOffset) || type == typeof(Uri);
-
         private static string Format(object value)
         {
             if (value is bool) return (bool)value ? "true" : "false";
+            // "O" keeps fractional seconds and the kind or offset, which the general pattern drops.
+            if (value is DateTime) return ((DateTime)value).ToString("O", CultureInfo.InvariantCulture);
+            if (value is DateTimeOffset) return ((DateTimeOffset)value).ToString("O", CultureInfo.InvariantCulture);
+            // The default pattern drops digits on Mono (0.3f * 3 prints as 0.9); "R" does not, except for the few
+            // doubles where .NET Framework's "R" is known to miss, which the check sends to "G17".
+            if (value is float) return RoundTrip((float)value);
+            if (value is double) return RoundTrip((double)value);
 
             var formattable = value as IFormattable;
             return formattable != null
@@ -259,15 +286,33 @@ namespace OpenUGD
                 : value.ToString();
         }
 
+        private static string RoundTrip(float value)
+        {
+            if (value == 0 && BitConverter.DoubleToInt64Bits(value) < 0) return "-0"; // Mono prints -0f as "0"
+            var text = value.ToString("R", CultureInfo.InvariantCulture);
+            return float.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture).Equals(value)
+                ? text
+                : value.ToString("G9", CultureInfo.InvariantCulture);
+        }
+
+        private static string RoundTrip(double value)
+        {
+            if (value == 0 && BitConverter.DoubleToInt64Bits(value) < 0) return "-0"; // Mono prints -0.0 as "0"
+            var text = value.ToString("R", CultureInfo.InvariantCulture);
+            return double.Parse(text, NumberStyles.Float, CultureInfo.InvariantCulture).Equals(value)
+                ? text
+                : value.ToString("G17", CultureInfo.InvariantCulture);
+        }
+
         // ---------------------------------------------------------------- json
 
         private static void ReadValue(ConfigurationManager target, string json, ref int index, string path,
             int depth)
         {
-            if (depth > MaxDepth) throw Malformed(index, "the document is nested more than 32 levels deep");
-
             SkipWhitespace(json, ref index);
             if (index >= json.Length) throw Malformed(index, "unexpected end of document");
+            if ((json[index] == '{' || json[index] == '[') && depth >= MaxDepth)
+                throw Malformed(index, "the document is nested more than 32 levels deep");
 
             switch (json[index])
             {
@@ -287,12 +332,8 @@ namespace OpenUGD
             if (index == start) throw Malformed(index, "expected a value");
 
             var literal = json.Substring(start, index - start);
-            if (literal != "null" && literal != "true" && literal != "false")
-            {
-                double number;
-                if (!double.TryParse(literal, NumberStyles.Float, CultureInfo.InvariantCulture, out number))
-                    throw Malformed(start, "'" + literal + "' is not a valid JSON value");
-            }
+            if (literal != "null" && literal != "true" && literal != "false" && !IsNumber(literal))
+                throw Malformed(start, "'" + literal + "' is not a valid JSON value");
 
             // A JSON null is stored as null, which reads back as absent - one rule, no third state.
             target.SetProviderValue(Key(path, start), literal == "null" ? null : literal);
@@ -319,7 +360,7 @@ namespace OpenUGD
                 if (index >= json.Length || json[index] != ':') throw Malformed(index, "expected ':'");
                 index++;
 
-                ReadValue(target, json, ref index, Join(path, name), depth + 1);
+                ReadValue(target, json, ref index, JsonJoin(path, name), depth + 1);
                 SkipWhitespace(json, ref index);
 
                 if (index >= json.Length) throw Malformed(index, "unexpected end of document");
@@ -353,7 +394,7 @@ namespace OpenUGD
             var element = 0;
             while (true)
             {
-                ReadValue(target, json, ref index, Join(path, element.ToString(CultureInfo.InvariantCulture)),
+                ReadValue(target, json, ref index, JsonJoin(path, element.ToString(CultureInfo.InvariantCulture)),
                     depth + 1);
                 element++;
                 SkipWhitespace(json, ref index);
@@ -385,6 +426,7 @@ namespace OpenUGD
                 var c = json[index++];
                 if (c == '"') return builder.ToString();
 
+                if (c < ' ') throw Malformed(index - 1, "a control character must be escaped inside a string");
                 if (c != '\\')
                 {
                     builder.Append(c);
@@ -405,8 +447,16 @@ namespace OpenUGD
                     case 't': builder.Append('\t'); break;
                     case 'u':
                         if (index + 4 > json.Length) throw Malformed(index, "truncated \\u escape");
-                        builder.Append((char)ushort.Parse(json.Substring(index, 4), NumberStyles.HexNumber,
-                            CultureInfo.InvariantCulture));
+                        var code = 0;
+                        for (var i = 0; i < 4; i++)
+                        {
+                            var digit = HexDigit(json[index + i]);
+                            if (digit < 0)
+                                throw Malformed(index + i, "'\\u' must be followed by four hexadecimal digits");
+                            code = code * 16 + digit;
+                        }
+
+                        builder.Append((char)code);
                         index += 4;
                         break;
                     default: throw Malformed(index - 1, "unknown escape '\\" + escape + "'");
@@ -418,12 +468,53 @@ namespace OpenUGD
 
         private static void SkipWhitespace(string json, ref int index)
         {
-            while (index < json.Length && char.IsWhiteSpace(json[index])) index++;
+            while (index < json.Length && " \t\r\n".IndexOf(json[index]) >= 0) index++;
+        }
+
+        private static int HexDigit(char c)
+        {
+            if (c >= '0' && c <= '9') return c - '0';
+            if (c >= 'a' && c <= 'f') return c - 'a' + 10;
+            if (c >= 'A' && c <= 'F') return c - 'A' + 10;
+            return -1;
+        }
+
+        /// RFC 8259: -? (0 | [1-9][0-9]*) (. [0-9]+)? ([eE] [+-]? [0-9]+)?
+        private static bool IsNumber(string s)
+        {
+            var i = 0;
+            if (i < s.Length && s[i] == '-') i++;
+            if (i >= s.Length) return false;
+            if (s[i] == '0') i++;
+            else if (s[i] >= '1' && s[i] <= '9') Digits(s, ref i);
+            else return false;
+
+            if (i < s.Length && s[i] == '.')
+            {
+                i++;
+                if (!Digits(s, ref i)) return false;
+            }
+
+            if (i < s.Length && (s[i] == 'e' || s[i] == 'E'))
+            {
+                i++;
+                if (i < s.Length && (s[i] == '+' || s[i] == '-')) i++;
+                if (!Digits(s, ref i)) return false;
+            }
+
+            return i == s.Length;
+        }
+
+        private static bool Digits(string s, ref int i)
+        {
+            var start = i;
+            while (i < s.Length && s[i] >= '0' && s[i] <= '9') i++;
+            return i > start;
         }
 
         private static string Key(string path, int index)
         {
-            if (path.Length != 0) return path;
+            if (path != null) return path;
 
             throw Malformed(index,
                 "the document root is a scalar, so it has no key - pass a prefix, or use an object at the root");
@@ -431,6 +522,8 @@ namespace OpenUGD
 
         private static string Join(string path, string segment) =>
             path.Length == 0 ? segment : path + ":" + segment;
+
+        private static string JsonJoin(string path, string segment) => path == null ? segment : path + ":" + segment;
 
         private static ConfigurationException Malformed(int index, string reason) =>
             new ConfigurationException(

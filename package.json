@@ -10,7 +10,7 @@
     "email": "dorofiy.kolya@gmail.com",
     "url": "https://github.com/openugd"
   },
-  "description": "Unreleased 0.x, outside the OpenUGD 2.0 release. String-keyed, layered configuration for com.openugd.context: a case-insensitive string-to-string map filled from JSON, dictionaries or settings objects, with explicit overrides on top, typed binding onto plain settings objects, and one opt-in registration, ContextBuilder.AddConfiguration, that makes it resolvable as IConfiguration. Has known open defects; read the README before use.",
+  "description": "Unreleased 0.x, outside the OpenUGD 2.0 release. String-keyed, layered configuration for com.openugd.context: a case-insensitive string-to-string map filled from JSON, dictionaries or settings objects, with explicit overrides on top, typed binding onto plain settings objects (scalars, structs, collections), and one opt-in registration, ContextBuilder.AddConfiguration, that makes it resolvable as IConfiguration, read-only once the context is built.",
   "keywords": [
     "configuration",
     "settings",

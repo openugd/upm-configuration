@@ -338,6 +338,137 @@ namespace OpenUGD.Tests
             StringAssert.Contains(typeof(IConfiguration).FullName, error.Message);
         }
 
+        // ===== CX-25: read-only once built =====
+
+        [Test]
+        public void TheManagerIsReadOnlyOnceItsContextIsBuilt()
+        {
+            var builder = NewBuilder();
+            var manager = builder.AddConfiguration();
+            manager["db:host"] = "live";
+            Build(builder);
+
+            Assert.Throws<InvalidOperationException>(() => manager["db:host"] = "other");
+            Assert.Throws<InvalidOperationException>(() => manager.AddJson("{\"db\":{\"host\":\"json\"}}"));
+            Assert.Throws<InvalidOperationException>(
+                () => manager.AddDictionary(new Dictionary<string, string> { { "db:host", "dict" } }));
+            Assert.Throws<InvalidOperationException>(() => manager.AddObject(new DbOptions { Host = "obj" }, "db"));
+            Assert.AreEqual("live", manager["db:host"]);
+        }
+
+        [Test]
+        public void AServiceCannotWriteByCastingItsConfigurationBack()
+        {
+            var builder = NewBuilder();
+            builder.AddConfiguration()["greeting"] = "hello";
+            var context = Build(builder);
+
+            var manager = context.Resolve<IConfiguration>() as ConfigurationManager;
+
+            Assert.IsNotNull(manager);
+            var error = Assert.Throws<InvalidOperationException>(() => manager["greeting"] = "changed");
+            StringAssert.Contains("read-only", error.Message);
+            Assert.AreEqual("hello", context.Resolve<IConfiguration>()["greeting"]);
+        }
+
+        [Test]
+        public void AServiceThatWritesConfigurationWhileBeingBuiltFailsTheBuild()
+        {
+            var builder = NewBuilder();
+            builder.AddConfiguration();
+            builder.Services.Add<WritingService>();
+
+            var error = Assert.Throws<ContextException>(() => RunSync(() => builder.BuildAsync()));
+
+            Assert.IsInstanceOf<InvalidOperationException>(error.InnerException);
+        }
+
+        [Test]
+        public void EveryProviderRefusesAFrozenManagerEvenWhenItWouldWriteNothing()
+        {
+            var builder = NewBuilder();
+            var manager = builder.AddConfiguration();
+            Build(builder);
+
+            Assert.Throws<InvalidOperationException>(() => manager.AddJson("{}"));
+            Assert.Throws<InvalidOperationException>(() => manager.AddJson("{\"a\":NaN}"));
+            Assert.Throws<InvalidOperationException>(
+                () => manager.AddDictionary(new Dictionary<string, string>()));
+            Assert.Throws<InvalidOperationException>(() => manager.AddObject(new List<int>(), "x"));
+        }
+
+        [Test]
+        public void AddConfigurationUnderAParentThatHasEndedDoesNotThrow()
+        {
+            var parentBuilder = NewBuilder("parent");
+            parentBuilder.AddConfiguration()["db:host"] = "live";
+            var parent = Build(parentBuilder);
+            var childBuilder = Context.CreateBuilder(lifetime: NewLifetime("child"), parent: parent);
+            parent.Dispose();
+
+            var configuration = childBuilder.AddConfiguration();
+
+            Assert.IsNull(configuration["db:host"], "An ended parent contributes nothing.");
+            Assert.Throws<OperationCanceledException>(() => RunSync(() => childBuilder.BuildAsync()));
+        }
+
+        [Test]
+        public void AManagerNoBuilderOwnsStaysWritable()
+        {
+            var manager = new ConfigurationManager();
+            manager["a"] = "1";
+            manager.AddJson("{\"b\":2}");
+            manager["a"] = "3";
+
+            Assert.AreEqual("3", manager["a"]);
+            Assert.AreEqual("2", manager["b"]);
+        }
+
+        // ===== CX-26: a child reads through to its parent =====
+
+        [Test]
+        public void AChildTracksALiveParentConfigurationAndLayersItsOwnValuesOnTop()
+        {
+            var live = new LiveConfiguration { ["db:host"] = "live", ["db:port"] = "5432", ["db:user"] = "admin" };
+            var parentBuilder = NewBuilder("parent");
+            parentBuilder.Services.AddInstance<IConfiguration>(live);
+            var parent = Build(parentBuilder);
+
+            var childBuilder = Context.CreateBuilder(lifetime: NewLifetime("child"), parent: parent);
+            var childManager = childBuilder.AddConfiguration();
+            childManager["db:host"] = "local";
+            childManager["db:user"] = null;
+            var configuration = Build(childBuilder).Resolve<IConfiguration>();
+
+            live["db:port"] = "6000";
+            live["db:name"] = "games";
+
+            Assert.AreEqual("local", configuration["db:host"], "The child's own value wins.");
+            Assert.AreEqual("6000", configuration["db:port"], "A later change in the parent shows through.");
+            Assert.AreEqual("games", configuration["db:name"], "So does a key the parent added later.");
+            Assert.IsNull(configuration["db:user"], "A key the child set to null hides the parent's.");
+
+            var pairs = configuration.ToList();
+            Assert.AreEqual(3, pairs.Count, "Each key once, the masked one not at all.");
+            CollectionAssert.AreEquivalent(new[] { "db:host", "db:port", "db:name" }, pairs.Select(p => p.Key));
+            Assert.AreEqual("live", live["db:host"], "The parent is never written.");
+        }
+
+        [Test]
+        public void BindingInAChildCombinesItsKeysWithItsParents()
+        {
+            var parentBuilder = NewBuilder("parent");
+            parentBuilder.AddConfiguration().AddJson("{\"db\":{\"host\":\"live\",\"port\":5432}}");
+            var parent = Build(parentBuilder);
+
+            var childBuilder = Context.CreateBuilder(lifetime: NewLifetime("child"), parent: parent);
+            childBuilder.AddConfiguration()["db:host"] = "local";
+            var options = Build(childBuilder).Resolve<IConfiguration>().Get<DbOptions>("db");
+
+            Assert.AreEqual("local", options.Host);
+            Assert.AreEqual(5432, options.Port);
+        }
+
         // ===== fixtures =====
 
         public interface IFeature { }
@@ -355,6 +486,28 @@ namespace OpenUGD.Tests
         {
             public string Host { get; set; }
             public int Port { get; set; }
+        }
+
+        public sealed class WritingService
+        {
+            public WritingService(IConfiguration configuration) { ((ConfigurationManager)configuration)["late"] = "x"; }
+        }
+
+        /// A configuration that changes after the build, as a remote-config client's would.
+        public sealed class LiveConfiguration : IConfiguration
+        {
+            private readonly Dictionary<string, string> _values =
+                new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+
+            public string this[string key]
+            {
+                get { string value; return _values.TryGetValue(key, out value) ? value : null; }
+                set { _values[key] = value; }
+            }
+
+            public IEnumerator<KeyValuePair<string, string>> GetEnumerator() => _values.GetEnumerator();
+
+            System.Collections.IEnumerator System.Collections.IEnumerable.GetEnumerator() => GetEnumerator();
         }
     }
 }
